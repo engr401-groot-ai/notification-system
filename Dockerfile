@@ -12,5 +12,5 @@ COPY main.py ./
 ENV PORT=8080
 EXPOSE 8080
 
-# Run Uvicorn directly as the container and allows proper signal handling.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run the application
+CMD ["python", "main.py"]
