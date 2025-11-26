@@ -2,3 +2,4 @@ requests
 python-dotenv
 pytz
 google-cloud-secret-manager
+google-api-python-client

@@ -7,6 +7,9 @@ import pytz
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
+from collections import defaultdict
+from googleapiclient.discovery import build
+from google.cloud import secretmanager
 
 # Configure logging
 logging.basicConfig(
@@ -22,7 +25,6 @@ def load_environment_variables() -> None:
     secret_name = f"projects/{project_id}/secrets/notification-system-env/versions/latest"
 
     try:
-        from google.cloud import secretmanager
         client = secretmanager.SecretManagerServiceClient()
         response = client.access_secret_version(request={"name": secret_name})
         payload = response.payload.data.decode("utf-8")
@@ -45,6 +47,7 @@ load_environment_variables()
 
 # Configuration - Load from environment
 SCRAPER_API_URL = os.getenv("SCRAPER_API_URL", "")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER")
@@ -80,10 +83,154 @@ def fetch_recent_mentions():
         logger.error(f"Failed to fetch mentions: {e}")
         return []
 
-def format_email_body(mentions):
-    """Format the mentions into an HTML email body."""
+def fetch_video_metadata(video_urls):
+    """Fetch video metadata from YouTube API including published dates.
+    
+    Args:
+        video_urls: List of video URLs to fetch metadata for
+        
+    Returns:
+        Dictionary mapping video_url to video metadata (including publishedAt)
+    """
+    if not video_urls or not YOUTUBE_API_KEY:
+        if not YOUTUBE_API_KEY:
+            logger.warning("YOUTUBE_API_KEY not configured. Video dates will show as N/A.")
+        return {}
+    
+    try:
+        # Extract video IDs from URLs
+        video_ids = []
+        url_to_id = {}
+        for url in video_urls:
+            # Extract video ID from URL (format: https://www.youtube.com/watch?v=VIDEO_ID)
+            if 'v=' in url:
+                video_id = url.split('v=')[1].split('&')[0]
+                video_ids.append(video_id)
+                url_to_id[video_id] = url
+        
+        if not video_ids:
+            return {}
+        
+        # Build YouTube API client
+        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+        
+        # Fetch video details in batches (API allows up to 50 IDs per request)
+        video_metadata = {}
+        batch_size = 50
+        
+        for i in range(0, len(video_ids), batch_size):
+            batch_ids = video_ids[i:i+batch_size]
+            
+            logger.info(f"Fetching metadata for {len(batch_ids)} videos from YouTube API...")
+            
+            request = youtube.videos().list(
+                part='snippet',
+                id=','.join(batch_ids)
+            )
+            response = request.execute()
+            
+            # Parse response
+            for item in response.get('items', []):
+                video_id = item['id']
+                video_url = url_to_id.get(video_id)
+                
+                if video_url:
+                    snippet = item.get('snippet', {})
+                    video_metadata[video_url] = {
+                        'title': snippet.get('title', ''),
+                        'publishedAt': snippet.get('publishedAt', ''),
+                        'channelTitle': snippet.get('channelTitle', '')
+                    }
+        
+        logger.info(f"Retrieved metadata for {len(video_metadata)} videos from YouTube API")
+        return video_metadata
+        
+    except Exception as e:
+        logger.warning(f"Failed to fetch video metadata from YouTube API: {e}")
+        return {}
+
+def format_timestamp(seconds):
+    """Format seconds into MM:SS or HH:MM:SS timestamp.
+    
+    Args:
+        seconds: Number of seconds
+        
+    Returns:
+        Formatted timestamp string
+    """
+    hours = int(seconds) // 3600
+    minutes = (int(seconds) % 3600) // 60
+    secs = int(seconds) % 60
+    
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    else:
+        return f"{minutes:02d}:{secs:02d}"
+
+def parse_video_date(published_at):
+    """Parse YouTube publishedAt date to Hawaii timezone display string.
+    
+    Args:
+        published_at: ISO format datetime string from YouTube API
+        
+    Returns:
+        Formatted date string in MM/DD/YYYY @ HH:MM AM/PM format, or "N/A" if parsing fails
+    """
+    if not published_at:
+        return "N/A"
+    
+    try:
+        dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+        hawaii_tz = pytz.timezone('Pacific/Honolulu')
+        dt_hawaii = dt.astimezone(hawaii_tz)
+        return dt_hawaii.strftime("%m/%d/%Y @ %I:%M %p")
+    except:
+        return "N/A"
+        
+def format_email_body(mentions, video_metadata=None):
+    """Format the mentions into an HTML email body.
+    
+    Args:
+        mentions: List of mention dictionaries
+        video_metadata: Optional dict mapping video_url to metadata (including publishedAt)
+    """
     if not mentions:
         return None
+
+    # Group mentions by video URL
+    videos = defaultdict(list)
+    for m in mentions:
+        video_url = m.get("video_url", "")
+        videos[video_url].append(m)
+    
+    # Sort each video's mentions by timestamp (ascending)
+    for video_url in videos:
+        videos[video_url].sort(key=lambda x: x.get("start_sec", 0))
+    
+    # Sort videos by published date (descending - newest first)
+    def video_sort_key(video_item):
+        video_url, video_mentions = video_item
+        
+        # Use YouTube API metadata for sorting
+        if video_metadata and video_url in video_metadata:
+            published_at = video_metadata[video_url].get('publishedAt')
+            if published_at:
+                try:
+                    dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                    # Sort by date (descending - newest day first)
+                    # But within same day, sort by time (ascending - earliest first)
+                    # Return tuple: (-date, time) where date is negative for descending
+                    date_only = dt.date()
+                    time_only = dt.time()
+                    # Convert date to ordinal (days since epoch) and negate for descending
+                    return (-date_only.toordinal(), time_only)
+                except:
+                    pass
+        
+        # If no date available, put at the end
+        return (0, datetime.max.time())
+    
+    sorted_videos = sorted(videos.items(), key=video_sort_key)
 
     html = """
     <html>
@@ -105,57 +252,47 @@ def format_email_body(mentions):
         <table>
             <thead>
                 <tr>
-                    <th>Video Title</th>
+                    <th>Hearing / Briefing</th>
                     <th>Keyword</th>
-                    <th>Text Snippet</th>
+                    <th>Text</th>
                     <th>Timestamp</th>
-                    <th>Found At</th>
+                    <th>Video Date</th>
                 </tr>
             </thead>
             <tbody>
     """
     
-    for m in mentions:
-        video_name = m.get("video_name", "Unknown Video")
-        keyword = m.get("keyword", "N/A")
-        text = m.get("text", "")
-        link = m.get("link", "#")
-        start_sec = m.get("start_sec", 0)
-        created_at = m.get("created_at", "")
-
-        # Truncate text if too long
-        if len(text) > 200:
-            text = text[:197] + "..."
-
-        # Format timestamp (MM:SS or HH:MM:SS)
-        hours = int(start_sec) // 3600
-        minutes = (int(start_sec) % 3600) // 60
-        seconds = int(start_sec) % 60
+    # Iterate through sorted videos and their sorted mentions
+    for video_url, video_mentions in sorted_videos:
+        # Get video name from the first mention
+        video_name = video_mentions[0].get("video_name", "Unknown Video") if video_mentions else "Unknown Video"
         
-        if hours > 0:
-            timestamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        else:
-            timestamp = f"{minutes:02d}:{seconds:02d}"
+        # Get video published date from metadata (calculate once per video)
+        video_date_display = "N/A"
+        if video_metadata and video_url in video_metadata:
+            published_at = video_metadata[video_url].get('publishedAt')
+            video_date_display = parse_video_date(published_at)
+        
+        for m in video_mentions:
+            keyword = m.get("keyword", "N/A")
+            text = m.get("text", "")
+            link = m.get("link", "#")
+            start_sec = m.get("start_sec", 0)
 
-        # Format created_at to Hawaii time
-        try:
-            if created_at:
-                dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                hawaii_tz = pytz.timezone('Pacific/Honolulu')
-                dt_hawaii = dt.astimezone(hawaii_tz)
-                created_display = dt_hawaii.strftime("%b %d, %I:%M %p HST")
-            else:
-                created_display = "N/A"
-        except Exception:
-            created_display = str(created_at)
+            # Truncate text if too long
+            if len(text) > 200:
+                text = text[:197] + "..."
 
-        html += f"""
+            # Format timestamp
+            timestamp = format_timestamp(start_sec)
+
+            html += f"""
                 <tr>
                     <td>{video_name}</td>
                     <td><strong>{keyword}</strong></td>
                     <td>{text}</td>
                     <td><a href="{link}">{timestamp}</a></td>
-                    <td>{created_display}</td>
+                    <td>{video_date_display}</td>
                 </tr>
         """
 
@@ -211,8 +348,14 @@ def main():
         logger.info("No new mentions found. Exiting.")
         return
 
+    # Extract unique video URLs from mentions
+    video_urls = list(set(m.get("video_url", "") for m in mentions if m.get("video_url")))
+    
+    # Fetch video metadata from YouTube API
+    video_metadata = fetch_video_metadata(video_urls)
+
     # Format and send email
-    body = format_email_body(mentions)
+    body = format_email_body(mentions, video_metadata)
     if body:
         subject = f"GRO Office's House and Senate YouTube Scraper: {len(mentions)} New Mentions Found!"
         send_email(subject, body)
