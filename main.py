@@ -124,7 +124,7 @@ def fetch_video_metadata(video_urls):
             logger.info(f"Fetching metadata for {len(batch_ids)} videos from YouTube API...")
             
             request = youtube.videos().list(
-                part='snippet',
+                part='snippet,liveStreamingDetails',
                 id=','.join(batch_ids)
             )
             response = request.execute()
@@ -136,9 +136,19 @@ def fetch_video_metadata(video_urls):
                 
                 if video_url:
                     snippet = item.get('snippet', {})
+                    live_details = item.get('liveStreamingDetails', {})
+                    
+                    # Determine the best available date
+                    # Priority: actualStartTime > scheduledStartTime > publishedAt
+                    published_at = live_details.get('actualStartTime')
+                    if not published_at:
+                        published_at = live_details.get('scheduledStartTime')
+                    if not published_at:
+                        published_at = snippet.get('publishedAt', '')
+                        
                     video_metadata[video_url] = {
                         'title': snippet.get('title', ''),
-                        'publishedAt': snippet.get('publishedAt', ''),
+                        'publishedAt': published_at,
                         'channelTitle': snippet.get('channelTitle', '')
                     }
         
