@@ -1,5 +1,5 @@
 requests
 python-dotenv
 pytz
-google-cloud-secret-manager
+google-cloud-firestore
 google-api-python-client

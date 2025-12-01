@@ -9,6 +9,7 @@ from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 from collections import defaultdict
 from googleapiclient.discovery import build
+from google.cloud import firestore
 
 # Configure logging
 logging.basicConfig(
@@ -21,23 +22,59 @@ logger = logging.getLogger("notifier")
 load_dotenv()
 logger.info("Loaded environment variables.")
 
-# Configuration - Load from environment
+def load_firestore_config():
+    """
+    Fetch dynamic settings (smtp_user, smtp_password, recipients) from Firestore
+    and inject them into os.environ so the rest of the module can read them.
+    """
+    try:
+        if not os.getenv("GCP_PROJECT_ID") and not os.path.exists(".env"):
+            logger.info("Skipping Firestore load (No Project ID and no .env file).")
+            return
+
+        logger.info("Attempting to load notification settings from Firestore...")
+        db = firestore.Client()
+        doc_ref = db.collection("settings").document("configuration")
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            logger.warning("Firestore document 'settings/configuration' not found.")
+            return
+
+        data = doc.to_dict() or {}
+        
+        if "sender" in data:
+            os.environ["SENDER"] = str(data["sender"])
+
+        if "password" in data:
+            os.environ["PASSWORD"] = str(data["password"])
+
+        if "recipients" in data and isinstance(data["recipients"], list):
+            os.environ["RECIPIENTS"] = ",".join(data["recipients"])
+
+        logger.info("✓ Successfully loaded settings from Firestore (settings/configuration).")
+
+    except Exception as e:
+        logger.warning(f"Failed to load Firestore config: {e}")
+
+load_firestore_config()
+
 SCRAPER_API_URL = os.getenv("SCRAPER_API_URL", "")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-TO_EMAILS = os.getenv("TO_EMAILS", "")
+SENDER = os.getenv("SENDER")
+PASSWORD = os.getenv("PASSWORD")
+RECIPIENTS = os.getenv("RECIPIENTS", "")
 HOURS_BACK = int(os.getenv("HOURS_BACK", "24"))
 
 def validate_configuration() -> None:
     """Validate that all required environment variables are set."""
     required = {
         "SCRAPER_API_URL": SCRAPER_API_URL,
-        "SMTP_USER": SMTP_USER,
-        "SMTP_PASSWORD": SMTP_PASSWORD,
-        "TO_EMAILS": TO_EMAILS,
+        "SENDER": SENDER,
+        "PASSWORD": PASSWORD,
+        "RECIPIENTS": RECIPIENTS,
     }
     missing = [k for k, v in required.items() if not v]
     if missing:
@@ -269,17 +306,17 @@ def format_email_body(mentions, video_metadata=None):
 
 def send_email(subject, body):
     """Send an HTML email using SMTP."""
-    if not SMTP_USER or not SMTP_PASSWORD or not TO_EMAILS:
-        logger.warning("SMTP configuration missing. Skipping email send.")
+    if not SENDER or not PASSWORD or not RECIPIENTS:
+        logger.warning("Email configuration missing. Skipping email send.")
         return
 
-    recipients = [e.strip() for e in TO_EMAILS.split(",") if e.strip()]
+    recipients = [e.strip() for e in RECIPIENTS.split(",") if e.strip()]
     if not recipients:
         logger.warning("No recipients configured.")
         return
 
     msg = MIMEMultipart()
-    msg["From"] = SMTP_USER
+    msg["From"] = SENDER
     msg["To"] = ", ".join(recipients)
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "html"))
@@ -288,7 +325,7 @@ def send_email(subject, body):
         logger.info(f"Connecting to SMTP server {SMTP_SERVER}:{SMTP_PORT}...")
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
             server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.login(SENDER, PASSWORD)
             server.send_message(msg)
         logger.info(f"Email sent successfully to {len(recipients)} recipients.")
     except Exception as e:
