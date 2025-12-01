@@ -24,7 +24,7 @@ logger.info("Loaded environment variables.")
 
 def load_firestore_config():
     """
-    Fetch dynamic settings (smtp_user, smtp_password, recipients) from Firestore
+    Fetch dynamic settings (sender, password, recipients) from Firestore
     and inject them into os.environ so the rest of the module can read them.
     """
     try:
