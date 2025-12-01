@@ -59,7 +59,7 @@ def load_firestore_config():
 
 load_firestore_config()
 
-SCRAPER_API_URL = os.getenv("SCRAPER_API_URL", "")
+SERVER_API_URL = os.getenv("SERVER_API_URL", "")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", ""))
@@ -71,7 +71,7 @@ HOURS_BACK = int(os.getenv("HOURS_BACK", ""))
 def validate_configuration() -> None:
     """Validate that all required environment variables are set."""
     required = {
-        "SCRAPER_API_URL": SCRAPER_API_URL,
+        "SERVER_API_URL": SERVER_API_URL,
         "SENDER": SENDER,
         "PASSWORD": PASSWORD,
         "RECIPIENTS": RECIPIENTS,
@@ -85,7 +85,7 @@ def validate_configuration() -> None:
 def fetch_recent_mentions():
     """Fetch recent mentions from the scraper API."""
     try:
-        url = f"{SCRAPER_API_URL}?hours={HOURS_BACK}"
+        url = f"{SERVER_API_URL}?hours={HOURS_BACK}"
         logger.info(f"Fetching mentions from {url}...")
         response = requests.get(url, timeout=30)
         response.raise_for_status()
