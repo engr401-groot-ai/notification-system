@@ -33,7 +33,7 @@ def load_firestore_config():
             return
 
         logger.info("Attempting to load notification settings from Firestore...")
-        db = firestore.Client()
+        db = firestore.Client(database="notification-system")
         doc_ref = db.collection("settings").document("configuration")
         doc = doc_ref.get()
 
