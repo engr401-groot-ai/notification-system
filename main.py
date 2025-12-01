@@ -61,12 +61,12 @@ load_firestore_config()
 
 SCRAPER_API_URL = os.getenv("SCRAPER_API_URL", "")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_SERVER = os.getenv("SMTP_SERVER", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", ""))
 SENDER = os.getenv("SENDER")
 PASSWORD = os.getenv("PASSWORD")
 RECIPIENTS = os.getenv("RECIPIENTS", "")
-HOURS_BACK = int(os.getenv("HOURS_BACK", "24"))
+HOURS_BACK = int(os.getenv("HOURS_BACK", ""))
 
 def validate_configuration() -> None:
     """Validate that all required environment variables are set."""
