@@ -9,7 +9,6 @@ from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 from collections import defaultdict
 from googleapiclient.discovery import build
-from google.cloud import secretmanager
 
 # Configure logging
 logging.basicConfig(
@@ -19,31 +18,8 @@ logging.basicConfig(
 logger = logging.getLogger("notifier")
 
 # Load environment variables
-def load_environment_variables() -> None:
-    """Load environment variables from Secret Manager (Cloud Run) or .env (local)."""
-    project_id = os.getenv("GCP_PROJECT_ID", "its-gro")
-    secret_name = f"projects/{project_id}/secrets/notification-system-env/versions/latest"
-
-    try:
-        client = secretmanager.SecretManagerServiceClient()
-        response = client.access_secret_version(request={"name": secret_name})
-        payload = response.payload.data.decode("utf-8")
-
-        for line in payload.strip().splitlines():
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            os.environ[k.strip()] = v.strip()
-
-        logger.info("✓ Loaded environment variables from Secret Manager")
-        return
-
-    except Exception as e:
-        logger.info(f"Secret Manager load failed ({e}); falling back to .env")
-        load_dotenv()
-        logger.info("✓ Loaded environment variables from .env (if present)")
-
-load_environment_variables()
+load_dotenv()
+logger.info("Loaded environment variables.")
 
 # Configuration - Load from environment
 SCRAPER_API_URL = os.getenv("SCRAPER_API_URL", "")
@@ -84,14 +60,7 @@ def fetch_recent_mentions():
         return []
 
 def fetch_video_metadata(video_urls):
-    """Fetch video metadata from YouTube API including published dates.
-    
-    Args:
-        video_urls: List of video URLs to fetch metadata for
-        
-    Returns:
-        Dictionary mapping video_url to video metadata (including publishedAt)
-    """
+    """Fetch video metadata from YouTube API including published dates."""
     if not video_urls or not YOUTUBE_API_KEY:
         if not YOUTUBE_API_KEY:
             logger.warning("YOUTUBE_API_KEY not configured. Video dates will show as N/A.")
@@ -160,14 +129,7 @@ def fetch_video_metadata(video_urls):
         return {}
 
 def format_timestamp(seconds):
-    """Format seconds into MM:SS or HH:MM:SS timestamp.
-    
-    Args:
-        seconds: Number of seconds
-        
-    Returns:
-        Formatted timestamp string
-    """
+    """Format seconds into MM:SS or HH:MM:SS timestamp."""
     hours = int(seconds) // 3600
     minutes = (int(seconds) % 3600) // 60
     secs = int(seconds) % 60
@@ -178,14 +140,7 @@ def format_timestamp(seconds):
         return f"{minutes:02d}:{secs:02d}"
 
 def parse_video_date(published_at):
-    """Parse YouTube publishedAt date to Hawaii timezone display string.
-    
-    Args:
-        published_at: ISO format datetime string from YouTube API
-        
-    Returns:
-        Formatted date string in MM/DD/YYYY @ HH:MM AM/PM format, or "N/A" if parsing fails
-    """
+    """Parse YouTube publishedAt date to Hawaii timezone display string."""
     if not published_at:
         return "N/A"
     
@@ -198,12 +153,7 @@ def parse_video_date(published_at):
         return "N/A"
         
 def format_email_body(mentions, video_metadata=None):
-    """Format the mentions into an HTML email body.
-    
-    Args:
-        mentions: List of mention dictionaries
-        video_metadata: Optional dict mapping video_url to metadata (including publishedAt)
-    """
+    """Format the mentions into an HTML email body."""
     if not mentions:
         return None
 
@@ -219,7 +169,7 @@ def format_email_body(mentions, video_metadata=None):
     
     # Sort videos by published date (descending - newest first)
     def video_sort_key(video_item):
-        video_url, video_mentions = video_item
+        video_url, _ = video_item
         
         # Use YouTube API metadata for sorting
         if video_metadata and video_url in video_metadata:
