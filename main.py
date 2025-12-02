@@ -85,7 +85,7 @@ def validate_configuration() -> None:
 def fetch_recent_mentions():
     """Fetch recent mentions from the scraper API."""
     try:
-        url = f"{SERVER_API_URL}?hours={HOURS_BACK}"
+        url = f"{SERVER_API_URL}/api/mentions/recent?hours={HOURS_BACK}"
         logger.info(f"Fetching mentions from {url}...")
         response = requests.get(url, timeout=30)
         response.raise_for_status()
